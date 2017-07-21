@@ -23,6 +23,7 @@ import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
 import hudson.model.BuildListener;
 import hudson.model.Hudson;
+import hudson.model.Job;
 import hudson.model.Run;
 import hudson.model.TaskListener;
 import hudson.model.Descriptor.FormException;
@@ -113,8 +114,8 @@ public class BitKeeperSCM extends SCM {
 	}
 
     @Override
-    public boolean checkout(AbstractBuild<?, ?> build, Launcher launcher,
-            FilePath workspace, BuildListener listener, File changelogFile)
+    public void checkout(Run<?, ?> build, Launcher launcher, FilePath workspace, final TaskListener listener,
+                         File changelogFile, SCMRevisionState baseline)
             throws IOException, InterruptedException {
     	
         FilePath localRepo = workspace.child(localRepository);
@@ -123,32 +124,31 @@ public class BitKeeperSCM extends SCM {
         } else {
         	cloneLocalRepo(build, launcher, listener, workspace);
         } 
-        
-        saveChangelog(build, launcher, listener, changelogFile, localRepo);
-
+        if(changelogFile != null){
+            saveChangelog(build, launcher, listener, changelogFile, localRepo);
+        }
         String mostRecent = 
             this.getLatestChangeset(
                 build.getEnvironment(listener), launcher, workspace,
                 this.localRepository, listener
             );
         build.addAction(new BitKeeperTagAction(build, mostRecent));
-        return true;
 	}
 
     @Override
-    public SCMRevisionState calcRevisionsFromBuild(AbstractBuild<?, ?> build,
+    public SCMRevisionState calcRevisionsFromBuild(Run<?, ?> build, FilePath workspace,
             Launcher launcher, TaskListener listener) throws IOException,
             InterruptedException {
         String mostRecent = 
             this.getLatestChangeset(
-                build.getEnvironment(listener), launcher, build.getWorkspace(),
+                build.getEnvironment(listener), launcher, workspace,
                 this.localRepository, listener
             );
         return new BitKeeperTagAction(build, mostRecent);
     }
 
-	private void pullLocalRepo(AbstractBuild<?,?> build, Launcher launcher, 
-			BuildListener listener, FilePath workspace) 
+	private void pullLocalRepo(Run<?,?> build, Launcher launcher,
+			TaskListener listener, FilePath workspace)
 	throws IOException, InterruptedException, AbortException {
 		FilePath localRepo = workspace.child(localRepository);
 		PrintStream output = listener.getLogger();
@@ -161,7 +161,7 @@ public class BitKeeperSCM extends SCM {
     	if(quiet) args.add("-q");
     	args.add(parent);
 		if(launcher.launch().cmds(args)
-		        .envs(build.getEnvironment(listener)).stdout(output).pwd(localRepo).join() != 0)
+			.envs(build.getEnvironment(listener)).stdout(output).pwd(localRepo).join() != 0)
 		{
 		        listener.error("Failed to pull from " + parent);
 		        throw new AbortException();        	
@@ -169,7 +169,7 @@ public class BitKeeperSCM extends SCM {
 		output.println("Pull completed");
 	}
 
-	private void saveChangelog(AbstractBuild<?,?> build, Launcher launcher, BuildListener listener,
+	private void saveChangelog(Run<?,?> build, Launcher launcher, TaskListener listener,
 			File changelogFile, FilePath localRepo)
 			throws IOException, InterruptedException, FileNotFoundException,
 			AbortException {
@@ -209,7 +209,7 @@ public class BitKeeperSCM extends SCM {
 
 	@Override
 	public DescriptorImpl getDescriptor() {
-		return DescriptorImpl.DESCRIPTOR;
+		return (DescriptorImpl) super.getDescriptor();
 	}
 	
 	private String getLatestChangeset(Map<String, String> env, Launcher launcher, 
@@ -240,11 +240,10 @@ public class BitKeeperSCM extends SCM {
             listener.error("Failed to identify a revision");
             throw new AbortException();
         }
-
     	return rev;
 	}
 	
-    private void cloneLocalRepo(AbstractBuild<?,?> build, Launcher launcher, 
+    private void cloneLocalRepo(Run<?,?> build, Launcher launcher,
     		TaskListener listener, FilePath workspace) 
     throws InterruptedException, IOException 
     {
@@ -255,7 +254,7 @@ public class BitKeeperSCM extends SCM {
     	args.add("clone");
     	if(quiet) args.add("-q");
     	args.add(parent);
-    	args.add(localRepository);
+	args.add(localRepo.getRemote());
     	PrintStream output = listener.getLogger();
     	
     	int attempt = 0;
@@ -268,7 +267,7 @@ public class BitKeeperSCM extends SCM {
     		}
     		localRepo.deleteRecursive();
     		result = launcher.launch().cmds(args)
-    				 .envs(build.getEnvironment(listener)).stdout(output).pwd(workspace).join();
+    				.envs(build.getEnvironment(listener)).stdout(output).join();
     	} while(++attempt < maxAttempts && result != 0);
     	
     	if(result != 0) {
@@ -279,13 +278,12 @@ public class BitKeeperSCM extends SCM {
     	output.println("New clone made");
     }
 
-    public static final class DescriptorImpl extends SCMDescriptor<BitKeeperSCM> {
         @Extension
-        public static final DescriptorImpl DESCRIPTOR = new DescriptorImpl();
+    public static final class DescriptorImpl extends SCMDescriptor<BitKeeperSCM> {
 
         private String bkExe;
 
-        private DescriptorImpl() {
+        public DescriptorImpl() {
             super(BitKeeperSCM.class, null);
             load();
         }
@@ -300,6 +298,10 @@ public class BitKeeperSCM extends SCM {
         public String getBkExe() {
             if(bkExe==null) return "bk";
             return bkExe;
+        }
+
+        @Override public boolean isApplicable(Job project) {
+            return true;
         }
 
         @Override
@@ -353,8 +355,8 @@ public class BitKeeperSCM extends SCM {
     }
 
     @Override
-    protected PollingResult compareRemoteRevisionWith(
-            AbstractProject<?, ?> project, Launcher launcher,
+    public PollingResult compareRemoteRevisionWith(
+            Job<?, ?> project, Launcher launcher,
             FilePath workspace, TaskListener listener, SCMRevisionState baseline)
             throws IOException, InterruptedException {
         Run lastBuild = project.getLastBuild();

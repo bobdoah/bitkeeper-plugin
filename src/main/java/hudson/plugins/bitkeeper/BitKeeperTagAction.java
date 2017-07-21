@@ -1,6 +1,6 @@
 package hudson.plugins.bitkeeper;
 
-import hudson.model.AbstractBuild;
+import hudson.model.Run;
 import hudson.model.AbstractModelObject;
 import hudson.model.Action;
 import hudson.scm.AbstractScmTagAction;
@@ -9,7 +9,7 @@ import hudson.scm.SCMRevisionState;
 public class BitKeeperTagAction extends SCMRevisionState {	
 	private String csetkey;
 	
-	public BitKeeperTagAction(AbstractBuild b, String key) {
+	public BitKeeperTagAction(Run b, String key) {
 		this.csetkey = key;
 	}
 	
